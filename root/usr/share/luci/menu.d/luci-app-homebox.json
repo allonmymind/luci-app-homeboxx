@@ -1,0 +1,10 @@
+{
+  "admin/services/homebox": {
+    "title": "Homebox 内网测速",
+    "order": 80,
+    "action": {
+      "type": "view",
+      "path": "homebox/status"
+    }
+  }
+}
