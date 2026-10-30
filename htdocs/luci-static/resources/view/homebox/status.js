@@ -4,7 +4,6 @@
 'require rpc';
 'require dom';
 
-// LuCI 24.10 起 luci.setInitAction 已移除，改用 rc ubus 命名空间控制 init 服务。
 var callRcInit = rpc.declare({
 	object: 'rc',
 	method: 'init',
@@ -33,7 +32,6 @@ function toast(msg, kind) {
 	catch (e) { try { notify(msg, kind); } catch (e2) { window.alert(msg); } }
 }
 
-// rc.list 返回以服务名为键的对象；解析 enabled
 function parseRcState(res, name) {
 	if (!res || typeof res !== 'object') return { hasInit: false, enabled: null };
 	var entry = res[name] || null;
@@ -41,7 +39,6 @@ function parseRcState(res, name) {
 	return { hasInit: true, enabled: !!(entry.enabled) };
 }
 
-// service list 返回以服务名为键的对象，instances 中任一 running 即视为运行中（procd 服务权威判断）
 function svcRunning(res, name) {
 	try {
 		var svc = res && res[name];
