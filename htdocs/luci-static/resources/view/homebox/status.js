@@ -1,8 +1,8 @@
 'use strict';
-'require view';
-'require ui';
+'require form';
+'require uci';
 'require rpc';
-'require dom';
+'require ui';
 
 var callRcInit = rpc.declare({
 	object: 'rc',
@@ -27,11 +27,6 @@ var callSvcList = rpc.declare({
 	reject: true
 });
 
-function toast(msg, kind) {
-	try { ui.addNotification(kind || 'info', msg); }
-	catch (e) { try { notify(msg, kind); } catch (e2) { window.alert(msg); } }
-}
-
 function parseRcState(res, name) {
 	if (!res || typeof res !== 'object') return { hasInit: false, enabled: null };
 	var entry = res[name] || null;
@@ -50,141 +45,62 @@ function svcRunning(res, name) {
 	} catch (e) { return null; }
 }
 
-return view.extend({
-	load: function () {
-		var rl = callRcList('homebox', true).then(function (r) {
-			return parseRcState(r, 'homebox');
-		}).catch(function () {
-			return { hasInit: false, enabled: null };
+var m = new form.Map('homebox', _('内网测速'), _('Homebox是一个局域网测速工具'));
+
+/* 加载服务运行状态，供状态显示使用 */
+m.load = function () {
+	return uci.load('homebox').then(function () {
+		return Promise.all([callRcList('homebox', true), callSvcList('homebox')])
+			.then(function (a) {
+				var st = parseRcState(a[0], 'homebox');
+				st.running = svcRunning(a[1], 'homebox');
+				return st;
+			})
+			.catch(function () {
+				return { hasInit: false, enabled: null, running: null };
+			});
+	});
+};
+
+/* 全局设置 */
+var s = m.section(form.NamedSection, 'main', 'homebox', _('全局设置'));
+s.anonymous = true;
+
+var dvState = s.option(form.DummyValue, '_state', _('运行状态'));
+dvState.cfgvalue = function (sid, data) {
+	data = data || {};
+	var running = data.running;
+	if (running === true) return _('运行中');
+	if (running === false) return _('Homebox服务未启动');
+	return _('状态未知（无法读取服务状态）');
+};
+
+var o = s.option(form.Flag, 'enabled', _('启用'),
+	_('勾选并点击“保存&应用”后，开机自启并启动 Homebox 服务；取消勾选并保存&应用，将停止并禁用服务。'));
+o.default = '1';
+o.rmempty = false;
+
+var dvUrl = s.option(form.DummyValue, 'port', _('访问地址'));
+dvUrl.cfgvalue = function () {
+	var port = uci.get('homebox', 'main', 'port') || '3300';
+	var host = (typeof window !== 'undefined' && window.location && window.location.hostname) ? window.location.hostname : '';
+	return 'http://' + host + ':' + port + '/';
+};
+
+/* 保存&应用时，根据启用状态启停服务 */
+var _apply = m.apply.bind(m);
+m.apply = function () {
+	var args = arguments;
+	return _apply.apply(null, args).then(function (res) {
+		return uci.get('homebox', 'main', 'enabled').then(function (v) {
+			var en = (v === '1' || v === true || v === 1);
+			return callRcInit('homebox', en ? 'enable' : 'disable')
+				.then(function () { return callRcInit('homebox', 'restart'); })
+				.then(function () { return res; });
 		});
-		var sl = callSvcList('homebox').then(function (r) {
-			return svcRunning(r, 'homebox');
-		}).catch(function () {
-			return null;
-		});
-		return Promise.all([rl, sl]).then(function (a) {
-			var st = a[0];
-			st.running = (a[1] !== null) ? a[1] : null;
-			return st;
-		});
-	},
+	}).catch(function (e) {
+		try { ui.addNotification('error', _('保存应用后启停服务失败: %s').format(e)); } catch (e2) {}
+	});
+};
 
-	render: function (state) {
-		var self = this;
-		var st = state || { hasInit: false, enabled: null, running: null };
-		self._state = st;
-
-		var url = 'http://' + window.location.hostname + ':3300/';
-
-		var running = st.running, enabled = st.enabled, unknown = (running == null);
-		var statusStr = unknown ? _('状态未知（无法读取服务状态）')
-			: (running ? _('运行中') : _('已停止'));
-		var statusText = E('span', { 'id': 'homebox-state-text' }, [ statusStr ]);
-
-		var btnStart = E('button', { 'class': 'cbi-button cbi-button-apply', 'id': 'homebox-start' }, [ _('启动') ]);
-		var btnStop = E('button', { 'class': 'cbi-button cbi-button-negative', 'id': 'homebox-stop' }, [ _('停止') ]);
-		var btnRestart = E('button', { 'class': 'cbi-button cbi-button-action', 'id': 'homebox-restart' }, [ _('重启') ]);
-		var btnAuto = E('button', { 'class': 'cbi-button cbi-button-reload', 'id': 'homebox-auto' },
-			[ (enabled === true) ? _('禁用开机自启') : _('启用开机自启') ]);
-
-		btnStart.disabled = (running === true);
-		btnStop.disabled = (running === false);
-		btnRestart.disabled = (running === false);
-
-		btnStart.addEventListener('click', function () { self.svcAction('start'); });
-		btnStop.addEventListener('click', function () { self.svcAction('stop'); });
-		btnRestart.addEventListener('click', function () { self.svcAction('restart'); });
-		btnAuto.addEventListener('click', function () {
-			self.svcAction(self._state.enabled ? 'disable' : 'enable');
-		});
-
-		var btnRow = E('div', { 'class': 'cbi-page-actions' }, [
-			btnStart, ' ', btnStop, ' ', btnRestart, ' ', btnAuto
-		]);
-
-		return E('div', { 'class': 'cbi-map' }, [
-			E('h2', {}, _('Homebox 内网测速')),
-
-			E('div', { 'class': 'cbi-section' }, [
-				E('p', {}, _('Homebox 提供浏览器内网测速服务。')),
-				E('p', {}, [
-					_('测速页面: '),
-					E('a', { 'href': url, 'target': '_blank', 'rel': 'noopener noreferrer' }, [ url ])
-				]),
-				E('div', { 'class': 'right' }, [
-					E('a', { 'class': 'btn cbi-button cbi-button-action', 'href': url, 'target': '_blank', 'rel': 'noopener noreferrer' }, [ _('打开测速页面') ])
-				])
-			]),
-
-			E('div', { 'class': 'cbi-section' }, [
-				E('h3', {}, _('服务控制')),
-				E('p', {}, [ _('当前状态: '), statusText ])
-			]),
-
-			btnRow,
-
-			E('div', { 'class': 'cbi-section' }, [
-				E('h3', {}, _('说明')),
-				E('p', {}, _('也可在 系统 → 启动项 中管理 homebox 服务。')),
-				E('pre', {}, [
-					'/etc/init.d/homebox enable\n',
-					'/etc/init.d/homebox start\n',
-					'/etc/init.d/homebox status'
-				])
-			])
-		]);
-	},
-
-	_updateUi: function () {
-		var st = this._state || {};
-		var running = st.running, enabled = st.enabled, unknown = (running == null);
-		var txt = unknown ? _('状态未知（无法读取服务状态）')
-			: (running ? _('运行中') : _('已停止'));
-		var stEl = document.getElementById('homebox-state-text');
-		if (stEl) stEl.textContent = txt;
-
-		var bS = document.getElementById('homebox-start'),
-			bT = document.getElementById('homebox-stop'),
-			bR = document.getElementById('homebox-restart'),
-			bA = document.getElementById('homebox-auto');
-		if (bS) bS.disabled = (running === true);
-		if (bT) bT.disabled = (running === false);
-		if (bR) bR.disabled = (running === false);
-		if (bA) {
-			bA.textContent = (enabled === true) ? _('禁用开机自启') : _('启用开机自启');
-		}
-	},
-
-	svcAction: function (action) {
-		var self = this;
-		ui.showModal(_('请稍候'), [ E('p', {}, _('正在执行: %s').format(action)) ]);
-		callRcInit('homebox', action)
-			.then(function () { return new Promise(function (r) { setTimeout(r, 1000); }); })
-			.then(function () { return self.refreshStatus(); })
-			.catch(function (e) { toast(_('操作失败: %s').format(e), 'error'); })
-			.finally(function () { ui.hideModal(); });
-	},
-
-	refreshStatus: function () {
-		var self = this;
-		var rl = callRcList('homebox', true).then(function (r) {
-			return parseRcState(r, 'homebox');
-		}).catch(function () {
-			return { hasInit: false, enabled: null };
-		});
-		var sl = callSvcList('homebox').then(function (r) {
-			return svcRunning(r, 'homebox');
-		}).catch(function () {
-			return null;
-		});
-		return Promise.all([rl, sl]).then(function (a) {
-			var st = a[0];
-			st.running = (a[1] !== null) ? a[1] : null;
-			self._state = st;
-			self._updateUi();
-		}).catch(function () {
-			self._state = { hasInit: false, enabled: null, running: null };
-			self._updateUi();
-		});
-	}
-});
+return m;
