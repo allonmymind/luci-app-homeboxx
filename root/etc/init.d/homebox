@@ -5,6 +5,13 @@ START=95
 STOP=10
 
 start_service() {
+    config_load homebox
+    config_get_bool enabled main enabled 0
+    [ "$enabled" -eq 1 ] || {
+        logger -t homebox "disabled in UCI (option enabled=0), not starting"
+        return 0
+    }
+
     [ -x /usr/bin/homebox ] || {
         logger -t homebox "Error: /usr/bin/homebox not found"
         return 1
