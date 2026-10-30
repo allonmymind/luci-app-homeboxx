@@ -4,12 +4,14 @@
 		"read": {
 			"ubus": {
 				"rc": ["list"],
-				"service": ["list"]
+				"service": ["list"],
+				"uci": ["get", "configs", "state"]
 			}
 		},
 		"write": {
 			"ubus": {
-				"rc": ["init"]
+				"rc": ["init"],
+				"uci": ["set", "commit", "apply", "add", "delete", "reorder"]
 			}
 		}
 	}
